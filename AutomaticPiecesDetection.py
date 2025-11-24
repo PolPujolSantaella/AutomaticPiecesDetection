@@ -1,151 +1,243 @@
-import cv2
+import cv2 
 import os
-import math
 import numpy as np
 import matplotlib.pyplot as plt
 
+# CONFIG
 PATH_IMAGES = "Assignment 1/Images"
+TARGET_WIDTH = 800
+HOUGH_PARAMS = {
+    'dp': 1.0,
+    'minDist': 200,
+    'param1': 50,
+    'param2': 45,
+    'minRadius': 100,
+    'maxRadius': 200
+}
 
-def load_images(img_path):
-    files = [f for f in os.listdir(img_path) if f.lower().endswith('.png')]
-    files.sort()
+KERNEL = np.array([[1, 2, 1],
+                   [0, 0, 0],
+                   [-1, -2, -1]])
 
+def resize_image_aspect(image, target_width):
+    """
+        Function to resize heigth and maintain aspect ratio.
+        Return: The image resized
+    """
+    h, w = image.shape[:2]
+    new_h = int(target_width * h / w)
+    return cv2.resize(image, (target_width, new_h), interpolation=cv2.INTER_AREA)
+
+def load_images(path):
+    """
+        Function to read and resize images to append them to a list
+        Return: A list of images loaded.
+    """
+    files = sorted([f for f in os.listdir(path) if f.lower().endswith(('.png'))])
     images = []
-    for filename in files:
-        full_path = os.path.join(img_path, filename)
-        img = cv2.imread(full_path)
-        if img is None:
-            print(f"Image unable to be loaded: {full_path}")
-            continue
-        images.append(img)
 
-    print(f"Loaded {len(images)} images from {img_path}")
+    for name in files:
+        img = cv2.imread(os.path.join(path, name))
+        if img is None:
+            print(f"Images unable to be loaded: {name}")
+            continue
+        images.append(resize_image_aspect(img, TARGET_WIDTH))
+
+    if images:
+        h, w = images[0].shape[:2]
+        print(f"Loaded {len(images)} images. Resized to {w}x{h}")
+    else:
+        print("No images loaded.")
 
     return images
 
 def preprocess_image(img):
+    """
+        Function to preprocess the image. 
+            - Convert to grayscale
+            - Apply Gaussian filter (5x5)
+
+        Return: Image preprocessed
+    """
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    return blurred
 
-    img_preprocessed = blurred.copy()
+def detect_lines(img, kernel):
+    """
+        Function to detect horizontal lines using Sobel Y
+        Return: List of lines detected
+    """
 
-    return img_preprocessed
+    conv = cv2.filter2D(img, -1, kernel)
+    h, w = conv.shape
+    lines = [
+        np.array([0, h, w, h]), # Bottom border
+        np.array([0, 0, 0, h]) # Left border
+    ]
 
+    detected_lines = cv2.HoughLinesP(conv, 1, np.pi / 180, 50, None, 400, 0)
+    
+    if detected_lines is not None:
+        lines.extend([l[0] for l in detected_lines])
 
-def detect_circles(img_preprocessed):
-    circles = cv2.HoughCircles(
-        img_preprocessed,
+    return lines
+
+def detect_circles(img, params):
+    """
+        Function to detect circles using HoughCircles
+        Return: Arrays of N circles
+    """
+    return cv2.HoughCircles(
+        img,
         cv2.HOUGH_GRADIENT,
-        dp=1,
-        minDist=100,
-        param1=50,
-        param2=25,
-        minRadius=90,
-        maxRadius=150
+        dp=params['dp'],
+        minDist=params['minDist'],
+        param1=params['param1'],
+        param2=params['param2'],
+        minRadius=params['minRadius'],
+        maxRadius=params['maxRadius']
     )
 
-    if circles is not None:
-        circles = np.uint16(np.around(circles))
-        print(f"Detected {circles.shape[1]} circles.")
-    else:
-        print("No circles detected.")
+def line_point_distance(x, y, x1, y1, x2, y2):
+    """
+        Function to calculate min distance between a point and a line.
+        Return: The min distance
+    """
+    denom = np.hypot(y2 - y1, x2 - x1)
+    if denom == 0:
+        return float('inf')
+    num = abs((y2 - y1) * x - (x2 - x1) * y + x2 * y1 - y2 * x1)
+    return num / denom 
 
-    return circles
+def get_complete_pieces(circles, lines):
+    """
+        Function to count how many complete circles we have. 
+        Using the detected lines, calculate the distance between the center of the circle and the lines.
+        If the distance is lower than (radius - 10px) the line is inside the circle
 
-
-def get_complete_pieces(img_shape, circles):
+        Return: Count of complete circles, array of complete circles
+    """
     if circles is None:
-        return 0, None
-        
-    H, W, _ = img_shape
-    complete_circles = []
+        return 0, np.empty((0, 3), dtype=np.uint16)
+    
+    circles = np.uint16(np.around(circles))
+    complete = []
 
-    for x, y, r in circles[0, :]:
-        is_complete_x = (x - r) > 0 and (x + r) < W
-        is_complete_y = (y - r) > 0 and (y + r) < H
-        
-        if is_complete_x and is_complete_y:
-            complete_circles.append((x, y, r))
-            
-    if complete_circles:
-        complete_circles_np = np.array(complete_circles, dtype=np.uint16).reshape(1, -1, 3)
-        return len(complete_circles), complete_circles_np
-    else:
-        return 0, None
+    for x, y, r in circles[0]:
+        is_complete = True
+        for x1, y1, x2, y2 in lines:
+            if line_point_distance(x, y, x1, y1, x2, y2) - r < -10:
+                is_complete = False
+                break
+        if is_complete:
+            complete.append([x, y, r])
+    return len(complete), np.array(complete)
 
-def draw_circles(img, complete_circles):
+def draw_circles(img, circles, lines, count):
+    """
+        Function to draw the complete circles.
+        Return: The image with complete circles drawed.
+    """
     output = img.copy()
 
-    if complete_circles is not None:
-        for (x, y, r) in complete_circles[0, :]:
-            cv2.circle(output, (x, y), r, (0, 255, 0), 2)  # contorno
-            cv2.circle(output, (x, y), 2, (0, 0, 255), 3)  # centro
-    return output
+    for x1, y1, x2, y2 in lines:
+        cv2.line(output, (x1, y1), (x2, y2), (0, 255, 0), 5, cv2.LINE_AA)
 
+    for x, y, r in circles:
+        cv2.circle(output, (x, y), r, (0, 0, 0), 5)
+        cv2.circle(output, (x, y), 5, (0, 0, 255), -1)
+
+    cv2.putText(output, f"Count: {count}", (10, 30), cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 2)
+    return output
+    
 
 def main():
+
+    # STEP 1: Load Images
     images = load_images(PATH_IMAGES)
-    if not images: 
-        print("No iamges loaded.")
+    if not images:
         return
     
-    drawn_images_list = []
+    originals = []
+    preprocessed_images = []
+    line_images = []
+    circle_images = []
+    drawn_list = []
     final_counts = []
-    preprocessed_images_list = []
 
+    # For each image
     for img in images:
-        preprocessed_img = preprocess_image(img)
-        detected_circles = detect_circles(preprocessed_img)
+        originals.append(img.copy())
+        
+        # STEP 2: Preprocessing
+        preprocessed = preprocess_image(img)
+        preprocessed_images.append(preprocessed)
 
-        count, complete_circles = get_complete_pieces(img.shape, detected_circles)
+        # STEP 3: Detect Horizontal Lines using HoughLinesP
+        lines = detect_lines(preprocessed, KERNEL)
+        line_vis = cv2.cvtColor(preprocessed, cv2.COLOR_GRAY2BGR)
+        for x1, y1, x2, y2 in lines:
+            cv2.line(line_vis, (x1, y1), (x2, y2), (0, 255, 0), 3)
+        line_images.append(line_vis)
 
-        drawn_img = draw_circles(img, complete_circles)
+        # STEP 4: Detect Circles
+        circles = detect_circles(preprocessed, HOUGH_PARAMS)
 
-        preprocessed_images_list.append(preprocessed_img)
-        drawn_images_list.append(drawn_img)
+        # STEP 5: Count complete circles
+        count, complete = get_complete_pieces(circles, lines)
         final_counts.append(count)
 
-    n = len(images)
+        circ_vis = img.copy()
+        if len(complete) > 0:
+            for x, y, r in complete:
+                cv2.circle(circ_vis, (x, y), r, (255, 0, 0), 4)
+        circle_images.append(circ_vis)
 
+        # STEP 6: Draw Complete circles
+        drawn_list.append(draw_circles(img, complete, lines, count))
+
+    # STEP 7: Visualization
     for i, c in enumerate(final_counts, 1):
-        print(f"✅ Image {i}: {c} complete pieces detected.")
+        print(f"Image {i}: {c} complete pieces detected")
 
-    # Display images
-    fig, axes = plt.subplots(3, n, figsize=(3*n, 8))
+    for i in range(len(images)):
 
-    if n == 1:
-        axes = np.array(axes).reshape(3, 1)
+        fig = plt.figure(figsize=(20, 10))
+        fig.suptitle(f"Image {i+1}", fontsize=18)
 
-    for i in range(n):
-        axes[0, i].imshow(cv2.cvtColor(images[i], cv2.COLOR_BGR2RGB))
-        axes[0, i].set_title(f"Original {i+1}")
-        axes[0, i].axis('off')
+        # Original Image
+        ax1 = plt.subplot2grid((2,4), (0,0))
+        ax1.imshow(cv2.cvtColor(originals[i], cv2.COLOR_BGR2RGB))
+        ax1.set_title("Original")
+        ax1.axis("off")
 
-        axes[1, i].imshow(preprocessed_images_list[i], cmap='gray')
-        axes[1, i].set_title(f"Preprocessed {i+1}")
-        axes[1, i].axis('off')
+        # Preprocessed Image
+        ax2 = plt.subplot2grid((2,4), (0,1))
+        ax2.imshow(preprocessed_images[i], cmap="gray")
+        ax2.set_title("Preprocessed")
+        ax2.axis("off")
 
-        axes[2, i].imshow(cv2.cvtColor(drawn_images_list[i], cv2.COLOR_BGR2RGB))
-        axes[2, i].set_title(f"Detected (Count: {final_counts[i]})")
-        axes[2, i].axis('off')
+        # Lines detected
+        ax3 = plt.subplot2grid((2,4), (0,2))
+        ax3.imshow(cv2.cvtColor(line_images[i], cv2.COLOR_BGR2RGB))
+        ax3.set_title("Detected Lines")
+        ax3.axis("off")
 
-    plt.tight_layout()
-    plt.show()
+        # Circles detected
+        ax4 = plt.subplot2grid((2,4), (0,3))
+        ax4.imshow(cv2.cvtColor(circle_images[i], cv2.COLOR_BGR2RGB))
+        ax4.set_title("Complete Circles Only")
+        ax4.axis("off")
 
-    fig, axes = plt.subplots(1, n, figsize=(4 * n, 6))
-    if n == 1:
-        axes = [axes]
+        # Final Result
+        ax5 = plt.subplot2grid((2,4), (1,0), colspan=4)
+        ax5.imshow(cv2.cvtColor(drawn_list[i], cv2.COLOR_BGR2RGB))
+        ax5.set_title(f"Final Detection (Count = {final_counts[i]})")
+        ax5.axis("off")
 
-    for i, ax in enumerate(axes):
-        ax.imshow(cv2.cvtColor(drawn_images_list[i], cv2.COLOR_BGR2RGB))
-        ax.set_title(f"Image {i+1}\nDetected: {final_counts[i]} pieces",
-                     fontsize=12, fontweight='bold')
-        ax.axis('off')
-
-    plt.suptitle("Final Results: Detected Pieces per Image", fontsize=18, fontweight='bold', color='darkblue')
-    plt.tight_layout(rect=[0, 0, 1, 0.93])
-    plt.show() 
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        plt.show()
 
 if __name__ == "__main__":
     main()
