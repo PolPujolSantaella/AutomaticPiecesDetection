@@ -239,7 +239,7 @@ def main():
         # Circles detected
         ax4 = plt.subplot2grid((2,4), (0,3))
         ax4.imshow(cv2.cvtColor(circle_images[i], cv2.COLOR_BGR2RGB))
-        ax4.set_title("Complete Circles Only")
+        ax4.set_title("Circles Detected")
         ax4.axis("off")
 
         # Final Result
