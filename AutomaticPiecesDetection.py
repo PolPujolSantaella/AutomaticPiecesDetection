@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 
 # CONFIG
 PATH_IMAGES = "Assignment 1/Images"
+OUTPUT_FOLDER = "output_images"
 TARGET_WIDTH = 800
 HOUGH_PARAMS = {
     'dp': 1.0,
@@ -248,7 +249,14 @@ def main():
         ax5.axis("off")
 
         plt.tight_layout(rect=[0, 0, 1, 0.95])
+        
+        # Store Images
+        output_filename = os.path.join(OUTPUT_FOLDER, f"Result_Image_{i+1}.png")
+        plt.savefig(output_filename)
+        print(f"Saved: {output_filename}")
+
         plt.show()
+        plt.close(fig)
 
 if __name__ == "__main__":
     main()
