@@ -21,8 +21,8 @@ KERNEL = np.array([[1, 2, 1],
 
 def resize_image_aspect(image, target_width):
     """
-        Function to resize heigth and maintain aspect ratio.
-        Return: The image resized
+    Function to resize heigth preserving the aspect ratio.
+    Returns the resized image.
     """
     h, w = image.shape[:2]
     new_h = int(target_width * h / w)
@@ -30,8 +30,8 @@ def resize_image_aspect(image, target_width):
 
 def load_images(path):
     """
-        Function to read and resize images to append them to a list
-        Return: A list of images loaded.
+    Load all PNG images from a directory, resize them with preserved aspect ratio,
+    and return them as a list.
     """
     files = sorted([f for f in os.listdir(path) if f.lower().endswith(('.png'))])
     images = []
@@ -53,11 +53,8 @@ def load_images(path):
 
 def preprocess_image(img):
     """
-        Function to preprocess the image. 
-            - Convert to grayscale
-            - Apply Gaussian filter (5x5)
-
-        Return: Image preprocessed
+    Convert the image to grayscale and apply a 5x5 Gaussian blur.
+    Returns the preprocessed image.
     """
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -65,8 +62,9 @@ def preprocess_image(img):
 
 def detect_lines(img, kernel):
     """
-        Function to detect horizontal lines using Sobel Y
-        Return: List of lines detected
+    Detect horizontal lines using a custom Sobel-like kernel and HoughLinesP.
+    Returns a list of line segments in (x1, y1, x2, y2) format.
+    Includes artificial border lines for robustness.
     """
 
     conv = cv2.filter2D(img, -1, kernel)
@@ -85,8 +83,8 @@ def detect_lines(img, kernel):
 
 def detect_circles(img, params):
     """
-        Function to detect circles using HoughCircles
-        Return: Arrays of N circles
+    Detect circles using the HoughCircles algorithm.
+    Returns an array of detected circles or None.
     """
     return cv2.HoughCircles(
         img,
@@ -101,8 +99,8 @@ def detect_circles(img, params):
 
 def line_point_distance(x, y, x1, y1, x2, y2):
     """
-        Function to calculate min distance between a point and a line.
-        Return: The min distance
+    Compute the minimum distance between a point and a line segment.
+    Returns the distance as a float.
     """
     denom = np.hypot(y2 - y1, x2 - x1)
     if denom == 0:
@@ -112,11 +110,11 @@ def line_point_distance(x, y, x1, y1, x2, y2):
 
 def get_complete_pieces(circles, lines):
     """
-        Function to count how many complete circles we have. 
-        Using the detected lines, calculate the distance between the center of the circle and the lines.
-        If the distance is lower than (radius - 10px) the line is inside the circle
-
-        Return: Count of complete circles, array of complete circles
+    Determine which circles are 'complete' by checking if any detected lines
+    intersect too deeply into the circle. A circle is considered complete
+    if no line passes closer than (radius - 10px) to its center.
+    
+    Returns the count of complete circles and an array of them.
     """
     if circles is None:
         return 0, np.empty((0, 3), dtype=np.uint16)
@@ -136,8 +134,9 @@ def get_complete_pieces(circles, lines):
 
 def draw_circles(img, circles, lines, count):
     """
-        Function to draw the complete circles.
-        Return: The image with complete circles drawed.
+    Draw detected complete circles and the relevant line segments on a copy
+    of the original image. Also annotate the total count.
+    Returns the annotated image.
     """
     output = img.copy()
 
@@ -153,6 +152,16 @@ def draw_circles(img, circles, lines, count):
     
 
 def main():
+    """
+    Pipeline:
+    1. Load and resize images.
+    2. Preprocess images.
+    3. Detect horizontal lines.
+    4. Detect circles.
+    5. Determine which circles are complete.
+    6. Draw results.
+    7. Display visual outputs for each image.
+    """
 
     # STEP 1: Load Images
     images = load_images(PATH_IMAGES)
@@ -184,15 +193,17 @@ def main():
         # STEP 4: Detect Circles
         circles = detect_circles(preprocessed, HOUGH_PARAMS)
 
+        circ_vis = img.copy() 
+        if circles is not None:
+            all_detected_circles = np.uint16(np.around(circles))[0]
+            for x, y, r in all_detected_circles: 
+                cv2.circle(circ_vis, (x, y), r, (255, 0, 0), 3) 
+                cv2.circle(circ_vis, (x, y), 2, (0, 255, 255), -1) 
+            circle_images.append(circ_vis)
+
         # STEP 5: Count complete circles
         count, complete = get_complete_pieces(circles, lines)
         final_counts.append(count)
-
-        circ_vis = img.copy()
-        if len(complete) > 0:
-            for x, y, r in complete:
-                cv2.circle(circ_vis, (x, y), r, (255, 0, 0), 4)
-        circle_images.append(circ_vis)
 
         # STEP 6: Draw Complete circles
         drawn_list.append(draw_circles(img, complete, lines, count))
